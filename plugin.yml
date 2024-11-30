@@ -5,7 +5,7 @@ version: 5.3.9
 softdepend: [EconomyAPI, BedrockEconomy]
 commands:
   chestshop:
-    aliases: ["cs", "cshop"]
+    aliases: ["cs", "cshop", "shop"]
     permission: chestshop.command
 permissions:
   chestshop.command:

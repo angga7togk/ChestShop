@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace muqsit\chestshop\category;
 
+use jojoe77777\FormAPI\CustomForm;
 use muqsit\chestshop\button\ButtonFactory;
 use muqsit\chestshop\button\ButtonIds;
 use muqsit\chestshop\button\CategoryNavigationButton;
@@ -21,7 +22,8 @@ use pocketmine\player\Player;
 use pocketmine\Server;
 use pocketmine\utils\TextFormat;
 
-final class CategoryPage{
+final class CategoryPage
+{
 
 	public const MAX_ENTRIES_PER_PAGE = 45;
 
@@ -36,8 +38,9 @@ final class CategoryPage{
 	/**
 	 * @param CategoryEntry[] $entries
 	 */
-	public function __construct(array $entries = []){
-		foreach($entries as $entry){
+	public function __construct(array $entries = [])
+	{
+		foreach ($entries as $entry) {
 			$this->entries[] = $entry;
 		}
 	}
@@ -45,15 +48,18 @@ final class CategoryPage{
 	/**
 	 * @return array<int, CategoryEntry>
 	 */
-	public function getEntries() : array{
+	public function getEntries(): array
+	{
 		return $this->entries;
 	}
 
-	public function getPage() : int{
+	public function getPage(): int
+	{
 		return $this->page;
 	}
 
-	public function init(Database $database, Category $category) : void{
+	public function init(Database $database, Category $category): void
+	{
 		$this->database = $database;
 		$this->menu = InvMenu::create(InvMenu::TYPE_DOUBLE_CHEST);
 		$this->category = $category;
@@ -61,8 +67,8 @@ final class CategoryPage{
 		/** @var Loader $loader */
 		$loader = Server::getInstance()->getPluginManager()->getPlugin("ChestShop");
 
-		if(CategoryConfig::getBool(CategoryConfig::BACK_TO_CATEGORIES)){
-			$this->menu->setInventoryCloseListener(static function(Player $player, Inventory $inventory) use($loader) : void{
+		if (CategoryConfig::getBool(CategoryConfig::BACK_TO_CATEGORIES)) {
+			$this->menu->setInventoryCloseListener(static function (Player $player, Inventory $inventory) use ($loader): void {
 				$loader->getChestShop()->send($player);
 			});
 		}
@@ -74,87 +80,112 @@ final class CategoryPage{
 		]);
 
 		$confirmation_ui = $loader->getConfirmationUi();
-		$this->menu->setListener(InvMenu::readonly(function(DeterministicInvMenuTransaction $transaction) use($confirmation_ui) : void{
+		$this->menu->setListener(InvMenu::readonly(function (DeterministicInvMenuTransaction $transaction) use ($confirmation_ui): void {
 			$player = $transaction->getPlayer();
 			$action = $transaction->getAction();
 
 			$slot = $action->getSlot();
 			$entry = $this->getPurchasableEntry($slot);
+			$formHandler = function (Player $player, ?array $data) use ($confirmation_ui, $slot, $entry): void {
+				if ($data === null) {
+					return;
+				}
+				if ($data[0] === null) {
+					$player->sendMessage("Please enter a valid amount.");
+					return;
+				}
+				if (!is_numeric($data[0])) {
+					$player->sendMessage("Invalid amount.");
+					return;
+				}
+				$amount = (int) $data[0];
+				if ($amount < 1) {
+					$player->sendMessage("Please enter a valid amount.");
+					return;
+				}
 
-			if($entry !== null){
-				if($confirmation_ui !== null){
-					$item = $entry->getItem();
 
-					$wildcards = [
-						"{NAME}" => $item->getName(),
-						"{COUNT}" => (string) $item->getCount(),
-						"{PRICE}" => (string) $entry->getPrice(),
-						"{PRICE_FORMATTED}" => EconomyManager::get()->formatMoney($entry->getPrice()),
-						"{CATEGORY}" => $this->category->getName(),
-						"{PAGE}" => (string) $this->page
-					];
-
-					$callback = function(Player $player, $data) use($slot, $entry) : void{
-						if($data === 0 && $this->getPurchasableEntry($slot) === $entry){
-							$this->attemptPurchase($player, $entry);
+				$item = $entry->getItem();
+				$wildcards = [
+					"{NAME}" => $item->getName(),
+					"{COUNT}" => (string) $item->getCount(),
+					"{PRICE}" => (string) $entry->getPrice() * $amount,
+					"{PRICE_FORMATTED}" => EconomyManager::get()->formatMoney($entry->getPrice() * $amount),
+				];
+				if ($confirmation_ui !== null) {
+					$callback = function (Player $player, $data) use ($slot, $entry, $amount): void {
+						if ($data === 0 && $this->getPurchasableEntry($slot) === $entry) {
+							$this->attemptPurchase($player, $entry, $amount);
 						}
 						$this->send($player);
 					};
 
 					$player->removeCurrentWindow();
-					$transaction->then(static function(Player $player) use($confirmation_ui, $wildcards, $callback) : void{
-						$confirmation_ui->send($player, $wildcards, $callback);
-					});
-				}else{
-					$this->attemptPurchase($player, $entry);
+					$confirmation_ui->send($player, $wildcards, $callback);
+				} else {
+					$this->attemptPurchase($player, $entry, $amount);
 				}
-			}else{
+			};
+			if ($entry !== null) {
+				$player->removeCurrentWindow();
+				$transaction->then(static function (Player $player) use ($formHandler): void {
+					$form = new CustomForm($formHandler);
+					$form->setTitle("Purchase");
+					$form->addInput("Amount");
+					$player->sendForm($form);
+				});
+			} else {
 				$button = ButtonFactory::fromItem($transaction->getItemClicked());
-				if($button instanceof CategoryNavigationButton){
+				if ($button instanceof CategoryNavigationButton) {
 					$button->navigate($player, $this->category, $this->page);
 				}
 			}
 		}));
 	}
 
-	private function getPurchasableEntry(int $slot) : ?CategoryEntry{
+	private function getPurchasableEntry(int $slot): ?CategoryEntry
+	{
 		return $this->entries[$slot] ?? null;
 	}
 
-	private function attemptPurchase(Player $player, CategoryEntry $entry) : void{
+	private function attemptPurchase(Player $player, CategoryEntry $entry, int $amount): void
+	{
 		$identity = PlayerIdentity::fromPlayer($player);
 		$_player = WeakPlayer::fromPlayer($player);
 		$economy = EconomyManager::get();
-		$economy->removeMoney($identity, $entry->getPrice(), static function(bool $success) use($identity, $_player, $economy, $entry) : void{
+		$item = $entry->getItem();
+		$item->setCount($amount);
+		$price = $entry->getPrice() * $amount;
+		$economy->removeMoney($identity, $price, static function (bool $success) use ($identity, $_player, $economy, $price, $item): void {
 			$player = $_player->get();
-			if($success){
-				if($player === null){
-					$economy->addMoney($identity, $entry->getPrice());
-				}else{
+			if ($success) {
+				if ($player === null) {
+					$economy->addMoney($identity, $price);
+				} else {
 					$pos = $player->getPosition();
-					foreach($player->getInventory()->addItem($entry->getItem()) as $item){
+					foreach ($player->getInventory()->addItem($item) as $item) {
 						$pos->getWorld()->dropItem($pos, $item);
 					}
 					$player->sendMessage(strtr(CategoryConfig::getString(CategoryConfig::PURCHASE_MESSAGE), [
 						"{PLAYER}" => $player->getName(),
-						"{PRICE}" => $entry->getPrice(),
-						"{PRICE_FORMATTED}" => $economy->formatMoney($entry->getPrice()),
-						"{ITEM}" => $entry->getItem()->getName(),
-						"{COUNT}" => $entry->getItem()->getCount()
+						"{PRICE}" => $price,
+						"{PRICE_FORMATTED}" => $economy->formatMoney($price),
+						"{ITEM}" => $item->getName(),
+						"{COUNT}" => $item->getCount()
 					]));
 				}
-			}elseif($player !== null){
-				$economy->getMoney($identity, static function(float $money) use($_player, $economy, $entry) : void{
+			} elseif ($player !== null) {
+				$economy->getMoney($identity, static function (float $money) use ($_player, $economy, $price, $item): void {
 					$player = $_player->get();
-					if($player !== null){
+					if ($player !== null) {
 						$player->sendMessage(strtr(CategoryConfig::getString(CategoryConfig::NOT_ENOUGH_MONEY_MESSAGE), [
 							"{PLAYER}" => $player->getName(),
-							"{PRICE}" => $entry->getPrice(),
-							"{PRICE_FORMATTED}" => $economy->formatMoney($entry->getPrice()),
+							"{PRICE}" => $price,
+							"{PRICE_FORMATTED}" => $economy->formatMoney($price),
 							"{MONEY}" => $money,
 							"{MONEY_FORMATTED}" => $economy->formatMoney($money),
-							"{ITEM}" => $entry->getItem()->getName(),
-							"{COUNT}" => $entry->getItem()->getCount()
+							"{ITEM}" => $item->getName(),
+							"{COUNT}" => $item->getCount()
 						]));
 					}
 				});
@@ -162,7 +193,8 @@ final class CategoryPage{
 		});
 	}
 
-	public function updatePageNumber(Category $category, int $page) : void{
+	public function updatePageNumber(Category $category, int $page): void
+	{
 		$this->page = $page;
 		$this->menu->setName(strtr(CategoryConfig::getString(CategoryConfig::TITLE), [
 			"{NAME}" => $category->getName(),
@@ -170,8 +202,9 @@ final class CategoryPage{
 		]));
 	}
 
-	public function addEntry(CategoryEntry $entry, bool $update) : void{
-		if($this->isFull()){
+	public function addEntry(CategoryEntry $entry, bool $update): void
+	{
+		if ($this->isFull()) {
 			throw new OverflowException("Cannot add more than " . self::MAX_ENTRIES_PER_PAGE . " entries to a page.");
 		}
 
@@ -185,7 +218,7 @@ final class CategoryPage{
 
 		$item->setCustomName(str_replace($find, $replace, CategoryConfig::getString(CategoryConfig::ITEM_BUTTON_NAME)));
 		$lore = str_replace($find, $replace, CategoryConfig::getStringList(CategoryConfig::ITEM_BUTTON_LORE_VALUE));
-		switch(CategoryConfig::getString(CategoryConfig::ITEM_BUTTON_LORE_TYPE)){
+		switch (CategoryConfig::getString(CategoryConfig::ITEM_BUTTON_LORE_TYPE)) {
 			case "push":
 				$new = $item->getLore();
 				array_push($new, ...$lore);
@@ -202,22 +235,25 @@ final class CategoryPage{
 		}
 
 		$this->menu->getInventory()->setItem($slot, $item);
-		if($update){
+		if ($update) {
 			$this->database->addToCategory($this->category, $this->getOffset() + $slot, $entry);
 		}
 	}
 
-	public function isEmpty() : bool{
+	public function isEmpty(): bool
+	{
 		return count($this->entries) === 0;
 	}
 
-	public function isFull() : bool{
+	public function isFull(): bool
+	{
 		return count($this->entries) >= self::MAX_ENTRIES_PER_PAGE;
 	}
 
-	public function removeItem(Item $item) : bool{
-		foreach($this->entries as $slot => $entry){
-			if($entry->getItem()->equals($item)){
+	public function removeItem(Item $item): bool
+	{
+		foreach ($this->entries as $slot => $entry) {
+			if ($entry->getItem()->equals($item)) {
 				$this->removeSlot($slot);
 				return true;
 			}
@@ -225,27 +261,31 @@ final class CategoryPage{
 		return false;
 	}
 
-	private function getOffset() : int{
+	private function getOffset(): int
+	{
 		return ($this->page - 1) * self::MAX_ENTRIES_PER_PAGE;
 	}
 
-	public function removeSlot(int $slot) : void{
+	public function removeSlot(int $slot): void
+	{
 		unset($this->entries[$slot]);
 		$this->entries = array_values($this->entries);
 
 		$inventory = $this->menu->getInventory();
-		for($item_slot = $slot + 1; $item_slot < self::MAX_ENTRIES_PER_PAGE; ++$item_slot){
+		for ($item_slot = $slot + 1; $item_slot < self::MAX_ENTRIES_PER_PAGE; ++$item_slot) {
 			$inventory->setItem($item_slot - 1, $inventory->getItem($item_slot));
 		}
 	}
 
-	public function send(Player $player) : void{
+	public function send(Player $player): void
+	{
 		$this->menu->send($player);
 	}
 
-	public function onDelete() : void{
+	public function onDelete(): void
+	{
 		$inventory = $this->menu->getInventory();
-		foreach($inventory->getViewers() as $viewer){
+		foreach ($inventory->getViewers() as $viewer) {
 			$viewer->sendMessage(TextFormat::GRAY . "The page you were viewing is no longer available.");
 			$viewer->removeCurrentWindow();
 		}

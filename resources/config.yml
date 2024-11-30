@@ -8,11 +8,11 @@
 #   {PAGE} => Page number
 confirmation-ui:
     # Whether to launch confirmation UI when players click on an item
-    enabled: false
+    enabled: true
     # Title of confirmation UI
     title: "Purchase Confirmation"
     # Body of the confirmation UI
-    body: "Are you sure you'd like to purchase {NAME} x{COUNT} for {PRICE_FORMATTED}?"
+    body: "Are you sure you'd like to purchase {NAME} x{COUNT} for {PRICE}?"
     # Text shown on the button
     buttons:
         confirm:
